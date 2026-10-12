@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Stage 0 alignment scene.
+
+  Purpose: prove that the camera, the colour pipeline and the sample count are
+  the same on both sides before any shading work starts. A checkerboard is the
+  right target because a half-pixel offset or a wrong colour space is instantly
+  visible and shows up as a large PSNR error, while a shading bug would not.
+
+  The film resolution lives here and nowhere else: this file is the single
+  source of truth for the camera and the film, so the Mitsuba reference and the
+  Forge render cannot drift apart.
+
+  Render the reference with:
+    ./scripts/render_ref.py --scene scenes/stage0_checkerboard.xml \
+        --spp 2048 --seed 0
+-->
+<scene version="3.0.0">
+
+    <integrator type="path">
+        <integer name="max_depth" value="4"/>
+    </integrator>
+
+    <sensor type="perspective">
+        <float name="fov" value="35"/>
+        <transform name="to_world">
+            <lookat origin="0, 0, 3.2" target="0, 0, 0" up="0, 1, 0"/>
+        </transform>
+        <film type="hdrfilm">
+            <integer name="width" value="512"/>
+            <integer name="height" value="512"/>
+            <string name="pixel_format" value="rgb"/>
+            <string name="component_format" value="float32"/>
+            <rfilter type="box"/>
+        </film>
+        <sampler type="independent">
+            <integer name="sample_count" value="64"/>
+        </sampler>
+    </sensor>
+
+    <!-- The board itself: a flat plane facing the camera. -->
+    <shape type="rectangle">
+        <transform name="to_world">
+            <scale x="3" y="3" z="3"/>
+        </transform>
+        <bsdf type="diffuse">
+            <texture type="checkerboard" name="reflectance">
+                <rgb name="color0" value="0.05"/>
+                <rgb name="color1" value="0.9"/>
+                <!-- The checkerboard texture is scaled through a UV
+                     transform; it has no "scale" property. -->
+                <transform name="to_uv">
+                    <scale value="4"/>
+                </transform>
+            </texture>
+        </bsdf>
+    </shape>
+
+    <!-- An area light, so the reference has soft shadows the Forge side can be
+         compared against from stage 4 onwards. Mitsuba area emitters inherit
+         their transform from the parent shape and must not carry their own. -->
+    <shape type="rectangle">
+        <transform name="to_world">
+            <lookat origin="-1.5, 2.5, 2.5" target="0, 0, 0" up="0, 1, 0"/>
+            <scale value="1.2"/>
+        </transform>
+        <emitter type="area">
+            <rgb name="radiance" value="12, 12, 12"/>
+        </emitter>
+    </shape>
+
+    <!-- A dim constant background keeps the unlit side of the board from being
+         pure black, which would hide energy errors in the dark end. -->
+    <emitter type="constant">
+        <rgb name="radiance" value="0.05, 0.05, 0.05"/>
+    </emitter>
+
+</scene>

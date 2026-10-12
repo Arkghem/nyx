@@ -1,0 +1,40 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "displayName": "nyx base",
+      "description": "Shared settings. Unix Makefiles because ninja is not installed and cannot be installed from inside the sandbox.",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/.build/cmake/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "macos-debug",
+      "inherits": "base",
+      "displayName": "macOS Debug",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "macos-release",
+      "inherits": "base",
+      "displayName": "macOS Release",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "macos-all",
+      "inherits": "macos-debug",
+      "displayName": "macOS Debug (every experiment)",
+      "cacheVariables": { "NX_BUILD_ALL": "ON" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "macos-debug", "configurePreset": "macos-debug" },
+    { "name": "macos-release", "configurePreset": "macos-release" },
+    { "name": "macos-all", "configurePreset": "macos-all" }
+  ]
+}

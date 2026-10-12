@@ -1,0 +1,87 @@
+# ---------------------------------------------------------------------------
+# AI tooling instructions and the lab notebook.
+# AGENTS.md tells a coding agent how to work here; docs/ holds the environment
+# archive, the decision log and the performance methodology. Both are working
+# notes for whoever is building the lab — they change constantly and are not
+# part of the published repository, so they stay local.
+#
+# Consequence: the published tree has to stand on its own. Environment traps
+# belong in the comments of the code they affect, and anything a user of the
+# repository needs belongs in README.md.
+# ---------------------------------------------------------------------------
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.cursorrules
+.cursor/
+.aider*
+.aiderignore
+.github/copilot-instructions.md
+/docs/
+
+# ---------------------------------------------------------------------------
+# Build trees.
+# Everything nyx produces must stay inside the repository: the file sandbox
+# denies writes anywhere else, so no build output belongs in ~/Library or /tmp.
+# ---------------------------------------------------------------------------
+.build/
+.cache/
+compile_commands.json
+
+# ---------------------------------------------------------------------------
+# Compilation artefacts.
+# Covered by .build/ for in-tree builds; listed explicitly so an out-of-tree or
+# editor-driven build cannot leak objects into the history either.
+# ---------------------------------------------------------------------------
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+*.o
+*.a
+*.air
+*.metallib
+*.dSYM/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# ---------------------------------------------------------------------------
+# Active-experiment switch (written by scripts/use.sh) and the convenience
+# symlink that points at core/<active>. Both are local state, not source.
+# ---------------------------------------------------------------------------
+.nx-active
+/entry
+
+# ---------------------------------------------------------------------------
+# Reproducible artefacts.
+# Anything that can be regenerated from scenes + spp + seed stays out of git.
+# ---------------------------------------------------------------------------
+outputs/*
+!outputs/.gitkeep
+reports/quality/*
+!reports/quality/.gitkeep
+reports/bench/*
+!reports/bench/.gitkeep
+references/_smoke/
+references/_large/
+
+# ---------------------------------------------------------------------------
+# Third-party sources downloaded at configure time. The registry in
+# third_party/README.md is the source of truth for what these are.
+# ---------------------------------------------------------------------------
+third_party/_deps/
+
+# ---------------------------------------------------------------------------
+# macOS / editors
+# ---------------------------------------------------------------------------
+.DS_Store
+*.swp
+*.gputrace

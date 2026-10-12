@@ -1,0 +1,14 @@
+# Normalise line endings for text sources; keep binary artefacts binary.
+* text=auto
+
+*.sh          text eol=lf
+*.py          text eol=lf
+*.cmake       text eol=lf
+CMakeLists.txt text eol=lf
+*.fsl         text eol=lf
+
+*.exr         binary
+*.metallib    binary
+*.png         binary
+*.jpg         binary
+*.gputrace    binary
