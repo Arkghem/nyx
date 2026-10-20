@@ -1,0 +1,54 @@
+{
+  "experiment": "02_shadows",
+  "timestamp": "2026-10-20T20:14:22",
+  "commit": "",
+  "hw": "arm64 Darwin 25.6.0 (Apple M3 Max)",
+  "renderer": "metal",
+  "timer_source": "command-buffer-gpu-time",
+  "vsync": false,
+  "resolution": [1920, 1080],
+  "warmup_frames": 60,
+  "frames": 300,
+  "frame_ms": {
+    "samples": 300,
+    "min": 0.297484,
+    "mean": 0.305321,
+    "p50": 0.304604,
+    "p95": 0.315297,
+    "p99": 0.329422,
+    "max": 0.348797
+  },
+  "cpu_frame_ms": {
+    "samples": 300,
+    "min": 0.0129062,
+    "mean": 0.0167354,
+    "p50": 0.016802,
+    "p95": 0.0194844,
+    "p99": 0.0223594,
+    "max": 0.0367917
+  },
+  "passes": {},
+  "metadata": {
+    "bench_iterations": "8",
+    "bias": "0.00100",
+    "build_type": "release",
+    "device": "Apple M3 Max",
+    "pcf_taps": "3",
+    "pipeline": "<preset>",
+    "scene": ".cache/scenes/shadow_basic.nxscene",
+    "shadow_size": "2048",
+    "tag": "sm",
+    "timing": "frame",
+    "variant": "sm"
+  },
+  "counters": {
+    "cascades": 1,
+    "draw_calls": 5,
+    "gbuffer_bytes": 7.46496e+07,
+    "shadow_map_bytes": 1.67772e+07,
+    "shadow_map_texels": 4.1943e+06,
+    "taps": 1,
+    "texel_world": 0.00902344,
+    "triangles": 50
+  }
+}

@@ -8,6 +8,8 @@
 #   ./scripts/bench.sh --frames 300 --warmup 60
 #   ./scripts/bench.sh --repeat 5                       # more runs, best one wins
 #   ./scripts/bench.sh --baseline                       # write reports/baselines/
+#   ./scripts/bench.sh 02_shadows --tag sm -- --variant sm
+#                                                       # name reports/baselines with a tag
 #   ./scripts/bench.sh -- --width 1280 --height 720     # extra experiment args
 #
 # Every experiment that supports benchmarking accepts --bench-warmup,
@@ -29,6 +31,7 @@ repeat=3
 metric="p95"
 baseline=0
 out=""
+tag=""
 extra=()
 
 while [ "$#" -gt 0 ]; do
@@ -38,6 +41,7 @@ while [ "$#" -gt 0 ]; do
         --repeat)   repeat="$2"; shift 2 ;;
         --metric)   metric="$2"; shift 2 ;;
         --baseline) baseline=1; shift ;;
+        --tag)      tag="$2"; shift 2 ;;
         --out)      out="$2"; shift 2 ;;
         --)         shift; extra=("$@"); break ;;
         -h|--help)
@@ -75,21 +79,24 @@ if [ ! -x "$binary" ]; then
 fi
 
 stamp="$(date +%Y%m%d-%H%M%S)"
+# A lab with many pipelines runs the same experiment many times; the tag keeps
+# their baselines and reports from overwriting each other.
+stem="${experiment}${tag:+_$tag}"
 if [ -n "$out" ]; then
     report="$out"
 elif [ "$baseline" -eq 1 ]; then
-    report="reports/baselines/${experiment}.json"
+    report="reports/baselines/${stem}.json"
 else
-    report="reports/bench/${experiment}_${stamp}.json"
+    report="reports/bench/${stem}_${stamp}.json"
 fi
 
 mkdir -p "$(dirname "$report")" "reports/bench"
 
-echo "== benchmark $experiment (warmup=$warmup frames=$frames repeat=$repeat) =="
+echo "== benchmark $experiment${tag:+ ($tag)} (warmup=$warmup frames=$frames repeat=$repeat) =="
 
 run_reports=()
 for run in $(seq 1 "$repeat"); do
-    run_report="reports/bench/${experiment}_${stamp}_run${run}.json"
+    run_report="reports/bench/${stem}_${stamp}_run${run}.json"
     echo "-- run $run/$repeat --"
     "$binary" "${extra[@]+"${extra[@]}"}" \
         --bench-warmup "$warmup" \

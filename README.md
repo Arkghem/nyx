@@ -39,6 +39,26 @@ source env.sh                  # required in every new shell
 On a fresh clone, `check_env.py` lists everything that is still missing
 (virtual environment, Python packages, the The-Forge submodule).
 
+### Editor integration
+
+Configuring generates a compilation database and symlinks it to the repository
+root as `compile_commands.json`, so clangd and most editors work with no extra
+configuration:
+
+```bash
+cmake --preset macos-debug     # writes .build/cmake/macos-debug/compile_commands.json
+                               # and points ./compile_commands.json at it
+```
+
+A plain `cmake -S . -B <dir>` works too and produces the database as well; if you
+pick your own build directory, keep it under `.build/` so it stays ignored. An
+explicit `-DCMAKE_EXPORT_COMPILE_COMMANDS=OFF` is respected.
+
+The link follows whichever build directory was configured last, and it is
+generated state, so it is not tracked. It covers every experiment, not only the
+active one — but re-run configure after adding sources, which `./scripts/build.sh`
+does for you.
+
 ---
 
 ## Adding an experiment
@@ -62,6 +82,7 @@ Existing experiments:
 |---|---|
 | `00_envcheck` | Native toolchain check: CMake to ObjC++ to Metal to timing to EXR, end to end |
 | `01_perf_probe` | Reference implementation of the benchmark contract, driven by `bench.sh` / `perf_gate.py` |
+| `02_shadows` | Realtime shadow lab: shadow map + PCF, offline Mitsuba/ray-cast truth, visibility metrics, quality/cost Pareto. See `core/02_shadows/README.md` |
 | `_template` | Template copied by `new_exp.sh` (never built) |
 
 ---
@@ -91,9 +112,19 @@ patches/     patches exported from The-Forge
 Both quality and cost are tracked against a baseline, and both act as gates.
 
 ```bash
-# Quality (from stage 1 onwards)
+# Quality: linear-light PSNR/MAE/SSIM and a difference image
 ./scripts/render_ref.py --scene scenes/stage0_checkerboard.xml --spp 2048 --seed 0
-# compare.py belongs to stage 1, together with the Forge-side Lambertian pass
+./scripts/compare.py --reference <reference.exr> --test <render.exr> \
+    --mask interior --out-diff <diff.exr> --out-png <diff.png>
+
+# 02_shadows: independent visibility truth and shadow-specific metrics
+python3 scripts/export_scene.py --all
+python3 core/02_shadows/tools/raycast_ref.py \
+    --scene .cache/scenes/shadow_basic.nxscene --out references/_smoke/shadow_basic_mask.exr
+python3 core/02_shadows/tools/shadow_metrics.py \
+    --reference references/_smoke/shadow_basic_mask.exr \
+    --test outputs/02_shadows/shadow_basic_sm_768x768_sm2048_b0.00100_seed0_vis.exr
+python3 core/02_shadows/tools/pareto.py --scene shadow_basic --resolution 1920x1080
 
 # Performance
 ./scripts/bench.sh 01_perf_probe --baseline      # record a baseline

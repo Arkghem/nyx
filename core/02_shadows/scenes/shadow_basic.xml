@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  02_shadows — first hard-shadow scene.
+
+  A ground plane with a few blockers and one directional light. The geometry is
+  deliberately mesh-only (rectangle/cube): 02_shadows exports these world-space
+  triangles to .nxscene and requires both renderers to see the same geometry.
+
+  Mitsuba applies <transform> children in the order listed: <scale> first, then
+  <translate>. Listing them the other way round scales the translation as well,
+  which silently moves every blocker toward the origin.
+
+  The light's to_world maps its local +Z to the propagation direction, i.e.
+  from the origin toward the target. The realtime shading pass uses the
+  opposite vector (toward the light).
+
+  Render the reference with scripts/render_ref.py (see the experiment README),
+  and export for the realtime renderer with scripts/export_scene.py. The exact
+  commands are kept in the README rather than in this comment: XML comments may
+  not contain a double hyphen, which command line flags do.
+-->
+<scene version="3.0.0">
+
+    <!-- Direct illumination only: the realtime renderer models a single bounce
+         from the directional light, so the reference must not add indirect
+         light or an environment term. -->
+    <integrator type="direct"/>
+
+    <sensor type="perspective">
+        <float name="fov" value="40"/>
+        <float name="near_clip" value="0.1"/>
+        <float name="far_clip" value="100"/>
+        <transform name="to_world">
+            <lookat origin="3.2, 2.6, 4.6" target="0, 0.9, 0" up="0, 1, 0"/>
+        </transform>
+        <film type="hdrfilm">
+            <integer name="width" value="768"/>
+            <integer name="height" value="768"/>
+            <string name="pixel_format" value="rgb"/>
+            <string name="component_format" value="float32"/>
+            <rfilter type="box"/>
+        </film>
+        <sampler type="independent">
+            <integer name="sample_count" value="64"/>
+        </sampler>
+    </sensor>
+
+    <!-- Ground: the unit rectangle lies in local XY with normal +Z; the lookat
+         rotates +Z onto +Y, then the scale makes it 12 x 12 world units. -->
+    <shape type="rectangle">
+        <transform name="to_world">
+            <scale value="6"/>
+            <lookat origin="0, 0, 0" target="0, 1, 0" up="0, 0, 1"/>
+        </transform>
+        <bsdf type="diffuse">
+            <rgb name="reflectance" value="0.55, 0.55, 0.55"/>
+        </bsdf>
+    </shape>
+
+    <!-- Main blocker: a 1.5 x 1.5 x 1.5 cube sitting exactly on the ground. -->
+    <shape type="cube">
+        <transform name="to_world">
+            <scale value="0.75"/>
+            <translate y="0.75"/>
+        </transform>
+        <bsdf type="diffuse">
+            <rgb name="reflectance" value="0.65, 0.65, 0.65"/>
+        </bsdf>
+    </shape>
+
+    <!-- Tall thin blocker, to make the shadow direction obvious. -->
+    <shape type="cube">
+        <transform name="to_world">
+            <scale x="0.4" y="1.0" z="0.4"/>
+            <translate x="-1.8" y="1.0" z="-1.0"/>
+        </transform>
+        <bsdf type="diffuse">
+            <rgb name="reflectance" value="0.6, 0.6, 0.6"/>
+        </bsdf>
+    </shape>
+
+    <!-- Thin vertical panel: a useful occluder for later shadow-volume and
+         two-sided tests. -->
+    <shape type="cube">
+        <transform name="to_world">
+            <scale x="0.08" y="0.5" z="0.9"/>
+            <translate x="1.7" y="0.5" z="0.7"/>
+        </transform>
+        <bsdf type="diffuse">
+            <rgb name="reflectance" value="0.5, 0.5, 0.5"/>
+        </bsdf>
+    </shape>
+
+    <!-- Low block, to get a second contact shadow. -->
+    <shape type="cube">
+        <transform name="to_world">
+            <scale x="0.35" y="0.25" z="0.35"/>
+            <translate x="0.9" y="0.25" z="-1.6"/>
+        </transform>
+        <bsdf type="diffuse">
+            <rgb name="reflectance" value="0.7, 0.7, 0.7"/>
+        </bsdf>
+    </shape>
+
+    <!-- Directional light: local +Z is the propagation direction, so the light
+         travels from (4, 6, 3) toward the origin. -->
+    <emitter type="directional">
+        <rgb name="irradiance" value="4, 4, 4"/>
+        <transform name="to_world">
+            <lookat origin="4, 6, 3" target="0, 0, 0" up="0, 1, 0"/>
+        </transform>
+    </emitter>
+
+</scene>

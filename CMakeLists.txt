@@ -32,6 +32,39 @@ include(NxMitsuba)
 
 nx_platform_setup()
 
+# ---------------------------------------------------------------------------
+# Compilation database.
+#
+# CMake initialises CMAKE_EXPORT_COMPILE_COMMANDS as a *cache* variable, so it is
+# always "defined" — an empty string when neither the environment variable nor -D
+# set it. The fallback therefore has to test for empty rather than for undefined,
+# and leaves an explicit OFF alone.
+# ---------------------------------------------------------------------------
+if(CMAKE_EXPORT_COMPILE_COMMANDS STREQUAL "")
+    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+endif()
+
+# clangd and most editors look for compile_commands.json at the project root, but
+# the generated file lives in the build tree — and there is one per preset. Point
+# a relative symlink at it so tooling works without per-editor configuration.
+#
+# The link is gitignored: it is generated state, and it follows whichever preset
+# was configured last.
+if(CMAKE_EXPORT_COMPILE_COMMANDS)
+    set(_nx_db_link "${CMAKE_SOURCE_DIR}/compile_commands.json")
+    if(EXISTS "${_nx_db_link}" AND NOT IS_SYMLINK "${_nx_db_link}")
+        # A real file someone put there on purpose. Do not clobber it.
+        message(STATUS "nyx: compile_commands.json exists at the root and is not a "
+                       "symlink; leaving it alone")
+    else()
+        file(RELATIVE_PATH _nx_db_target "${CMAKE_SOURCE_DIR}"
+             "${CMAKE_BINARY_DIR}/compile_commands.json")
+        file(REMOVE "${_nx_db_link}")
+        file(CREATE_LINK "${_nx_db_target}" "${_nx_db_link}" SYMBOLIC)
+        message(STATUS "nyx: compile_commands.json -> ${_nx_db_target}")
+    endif()
+endif()
+
 option(NX_BUILD_ALL "Configure every experiment for the default build" OFF)
 
 set(NX_ACTIVE "" CACHE STRING

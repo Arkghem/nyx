@@ -59,8 +59,15 @@ struct PerfReport {
     int         warmup_frames = 0;
 
     FrameStats frame_ms;
+    // CPU time of the frame function (encoding and submission), excluding the
+    // GPU wait. Empty when an experiment does not measure it; the JSON then
+    // omits the key and the previous schema is unchanged.
+    FrameStats cpu_frame_ms;
     std::map<std::string, FrameStats> passes;
     std::map<std::string, double>     counters;
+    // Free-form strings for reproducibility: pipeline spec, scene, shadow
+    // budget, build type. Optional; omitted from the JSON when empty.
+    std::map<std::string, std::string> metadata;
 
     std::string to_json() const;
     bool        write_json(const std::string& path, std::string* error = nullptr) const;

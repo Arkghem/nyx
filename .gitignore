@@ -23,9 +23,20 @@ GEMINI.md
 # Build trees.
 # Everything nyx produces must stay inside the repository: the file sandbox
 # denies writes anywhere else, so no build output belongs in ~/Library or /tmp.
+#
+# `.build/` is what the presets and scripts use. `build/` is the CMake
+# convention and appears whenever someone runs a bare
+# `cmake -S . -B build` — ignoring it too means that cannot leak into history.
+# Note that build outputs land in .build/bin regardless of which build directory
+# is used, because NxPlatform.cmake pins the output directories.
 # ---------------------------------------------------------------------------
 .build/
+/build/
 .cache/
+
+# The compilation database itself lives in the build tree; the root entry is a
+# relative symlink to it, created at configure time so clangd finds it. Both are
+# generated state.
 compile_commands.json
 
 # ---------------------------------------------------------------------------

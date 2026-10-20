@@ -159,6 +159,12 @@ std::string PerfReport::to_json() const {
     out << "  \"frames\": "       << frame_ms.count() << ",\n";
     out << "  \"frame_ms\": "     << stats_json(frame_ms, "  ") << ",\n";
 
+    // Only emitted when the experiment measured CPU time, so reports from
+    // experiments that do not care about it keep the previous schema.
+    if (!cpu_frame_ms.empty()) {
+        out << "  \"cpu_frame_ms\": " << stats_json(cpu_frame_ms, "  ") << ",\n";
+    }
+
     out << "  \"passes\": {";
     if (passes.empty()) {
         out << "},\n";
@@ -169,6 +175,16 @@ std::string PerfReport::to_json() const {
             out << "    " << quote(entry.first) << ": "
                 << stats_json(entry.second, "    ");
             out << (++index < passes.size() ? ",\n" : "\n");
+        }
+        out << "  },\n";
+    }
+
+    if (!metadata.empty()) {
+        out << "  \"metadata\": {\n";
+        std::size_t index = 0;
+        for (const auto& entry : metadata) {
+            out << "    " << quote(entry.first) << ": " << quote(entry.second);
+            out << (++index < metadata.size() ? ",\n" : "\n");
         }
         out << "  },\n";
     }
