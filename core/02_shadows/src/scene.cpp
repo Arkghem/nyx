@@ -6,7 +6,10 @@
 
 #include "scene.h"
 
+#include "mesh_format.h"
+
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <utility>
@@ -74,7 +77,7 @@ void Camera::set_resolution(int width_value, int height_value) {
 std::size_t Scene::triangle_count() const {
     std::size_t count = 0;
     for (const Mesh& mesh : meshes) {
-        count += mesh.triangles.size();
+        count += mesh.triangle_count();
     }
     return count;
 }
@@ -92,6 +95,7 @@ bool load_nxscene(const std::string& path, Scene* scene, std::string* error) {
 
     Scene result;
     bool saw_header = false;
+    int scene_version = 0;
     std::string line;
     int line_number = 0;
 
@@ -123,16 +127,18 @@ bool load_nxscene(const std::string& path, Scene* scene, std::string* error) {
 
         if (token == "nxscene") {
             int version = 0;
-            if (!(stream >> version) || version != 1) {
-                *error = location(path, line_number) + "unsupported .nxscene version";
+            if (!(stream >> version) || version < 1 || version > 2) {
+                *error = location(path, line_number) +
+                         "unsupported .nxscene version (this build knows 1 and 2)";
                 return false;
             }
             saw_header = true;
+            scene_version = version;
             continue;
         }
 
         if (!saw_header) {
-            *error = location(path, line_number) + "missing 'nxscene 1' header";
+            *error = location(path, line_number) + "missing 'nxscene' header";
             return false;
         }
 
@@ -214,6 +220,63 @@ bool load_nxscene(const std::string& path, Scene* scene, std::string* error) {
             continue;
         }
 
+        if (token == "meshfile") {
+            if (scene_version < 2) {
+                *error = location(path, line_number) +
+                         "'meshfile' needs an 'nxscene 2' header";
+                return false;
+            }
+            Mesh mesh;
+            double albedo[3] = {};
+            std::size_t triangle_count = 0;
+            std::string relative_path;
+            if (!parse_doubles(stream, 3, albedo, path, line_number,
+                               "mesh albedo", error)) {
+                return false;
+            }
+            if (!(stream >> triangle_count >> relative_path) ||
+                triangle_count == 0 || relative_path.empty()) {
+                *error = location(path, line_number) +
+                         "meshfile needs <r> <g> <b> <triangle_count> <path>";
+                return false;
+            }
+
+            // The path is relative to the scene file, so a `.cache/scenes`
+            // directory can be moved or copied without rewriting every line.
+            const std::filesystem::path scene_path(path);
+            const std::filesystem::path mesh_path =
+                scene_path.parent_path() / relative_path;
+
+            MeshFileHeader header{};
+            std::string mesh_error;
+            if (!read_mesh_header(mesh_path.string(), &header, &mesh_error)) {
+                *error = location(path, line_number) + mesh_error +
+                         " (re-run scripts/export_scene.py)";
+                return false;
+            }
+            const std::size_t header_triangles =
+                static_cast<std::size_t>(header.index_count) / 3u;
+            if (header_triangles != triangle_count) {
+                *error = location(path, line_number) +
+                         "meshfile triangle count does not match " +
+                         mesh_path.string() + " (" +
+                         std::to_string(triangle_count) + " vs " +
+                         std::to_string(header_triangles) + ")";
+                return false;
+            }
+
+            mesh.albedo = finite_vec3(albedo[0], albedo[1], albedo[2]);
+            mesh.mesh_path = mesh_path.string();
+            mesh.vertex_count = header.vertex_count;
+            mesh.index_count = header.index_count;
+            result.bounds.expand({header.bounds_min[0], header.bounds_min[1],
+                                  header.bounds_min[2]});
+            result.bounds.expand({header.bounds_max[0], header.bounds_max[1],
+                                  header.bounds_max[2]});
+            result.meshes.push_back(std::move(mesh));
+            continue;
+        }
+
         if (token == "mesh") {
             Mesh mesh;
             double albedo[3] = {};
@@ -276,7 +339,7 @@ bool load_nxscene(const std::string& path, Scene* scene, std::string* error) {
     }
 
     if (!saw_header) {
-        *error = path + ": missing 'nxscene 1' header";
+        *error = path + ": missing 'nxscene' header";
         return false;
     }
     if (result.meshes.empty()) {
@@ -294,6 +357,10 @@ bool load_nxscene(const std::string& path, Scene* scene, std::string* error) {
                 result.bounds.expand(position);
             }
         }
+    }
+    if (!result.bounds.valid) {
+        *error = path + ": no valid geometry bounds";
+        return false;
     }
 
     *scene = std::move(result);

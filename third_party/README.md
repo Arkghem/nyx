@@ -37,6 +37,16 @@ nx_dependency(
     REQUIRED)
 ```
 
+## Datasets
+
+Datasets are not linked code, so they do not go through `nx_dependency()`. They
+still need a pinned source, a licence and a one-command fetch. They land in the
+same `_deps/` cache and are gitignored.
+
+| Name | Version | Mode | Licence | Used by | Notes |
+|---|---|---|---|---|---|
+| Amazon Lumberyard Bistro Exterior | G3D `data10` zip, SHA256 `f612ba0d8a65811afe0d48a023d31e5b43ac40b78e9b12d15e2b7dc8923c29d4` | `core/02_shadows/tools/bistro_scene.py fetch` | CC-BY 4.0 | `02_shadows` | 61 MiB zip → 297 MiB OBJ + MTL, 2.84M triangles, **no textures**. `prepare` fixes one invalid normal and drops the missing-texture MTL references. See `core/02_shadows/notes/03_bistro.md` |
+
 ## Planned, not yet present
 
 | Name | Purpose | Stage | Notes |

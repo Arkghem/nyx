@@ -413,7 +413,9 @@ int main(int argc, const char* const* argv) {
             if (options.scene.find(".xml") != std::string::npos) {
                 std::fprintf(stderr,
                              "hint : %s is a Mitsuba scene; export it first:\n"
-                             "       python3 scripts/export_scene.py --scene %s\n",
+                             "       python3 scripts/export_scene.py --scene %s\n"
+                             "       (add --binary for a large mesh, or use\n"
+                             "        core/02_shadows/tools/bistro_scene.py for Bistro)\n",
                              options.scene.c_str(), options.scene.c_str());
             }
             return 1;

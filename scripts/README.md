@@ -14,7 +14,7 @@ in every new shell first**.
 | `bench_pick.py` | Pick the best of several runs. Between-run variance measured 81% here, so a single run is not a measurement. Normally called by `bench.sh` |
 | `perf_gate.py --candidate <json> [--baseline <json>] [--threshold 0.10] [--metric p95]` | Performance gate |
 | `render_ref.py --scene <xml> [--spp N] [--seed N] [--out PATH] [--variant V]` | Render a Mitsuba reference image |
-| `export_scene.py [--scene <xml>] [--all] [--emit-aov]` | Export a Mitsuba scene to the native renderer's `.nxscene` format; `--emit-aov` also writes the albedo-AOV calibration scene |
+| `export_scene.py [--scene <xml>] [--all] [--binary] [--emit-aov]` | Export a Mitsuba scene to the native renderer's `.nxscene` format; `--emit-aov` also writes the albedo-AOV calibration scene. `--binary` writes content-addressed `.nxmesh` sidecars and is required for Bistro-scale meshes; `--all` covers the small calibration scenes |
 | `compare.py --reference <exr> --test <exr> [--mask ...] [--roi ...] [--roi-erode N]` | Linear-light PSNR / MAE / SSIM + diff EXR/PNG. ROI can come from a visibility reference |
 | `nx_io.py` | Shared library, not an executable: EXR write/read and tone mapping. **All image writes go through this** |
 | `build_forge.sh [--release\|--dry-run]` | Build `libThe-Forge.a` with xcodebuild |
@@ -65,6 +65,11 @@ python3 core/02_shadows/tools/raycast_ref.py \
 python3 core/02_shadows/tools/shadow_metrics.py \
     --reference references/_smoke/shadow_basic_mask.exr \
     --test outputs/02_shadows/shadow_basic_sm_768x768_sm2048_b0.00100_seed0_vis.exr
+
+# 02_shadows: Bistro, the 2.84M-triangle large-scene scaffold
+python3 core/02_shadows/tools/bistro_scene.py all
+./scripts/run.sh --scene .cache/scenes/bistro_plaza.nxscene --variant sm \
+    --cull none --bias 0.001
 
 # Performance
 ./scripts/bench.sh 01_perf_probe --baseline     # record a baseline

@@ -9,6 +9,7 @@
 #include "math.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -21,7 +22,20 @@ struct Triangle {
 
 struct Mesh {
     Vec3 albedo{0.5f, 0.5f, 0.5f};
+
+    // Small scenes keep their triangles in the `.nxscene` text. Large scenes
+    // put them in a `.nxmesh` sidecar and leave this empty; the renderer streams
+    // the sidecar straight into Metal buffers, so the CPU never owns a
+    // multi-million-triangle array.
     std::vector<Triangle> triangles;
+    std::string mesh_path;        // empty for an inline mesh
+    std::uint32_t vertex_count = 0;
+    std::uint32_t index_count = 0;
+
+    bool is_binary() const { return !mesh_path.empty(); }
+    std::size_t triangle_count() const {
+        return is_binary() ? index_count / 3u : triangles.size();
+    }
 };
 
 struct Light {

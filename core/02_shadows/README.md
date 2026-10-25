@@ -27,14 +27,16 @@ the notes say so explicitly.
 
 ## Status
 
-P0 and P1 are implemented:
+P0, P1 and the Bistro large-scene scaffold are implemented:
 
 * hard shadow map (`sm`), percentage-closer filtering (`pcf` with 3/5 taps);
 * calibration variants (`albedo`, `lit`, `depth`) and a camera/projection
   self-test;
 * Mitsuba AOV/albedo calibration and an independent ray-cast visibility
   reference;
-* a quality/cost Pareto over shadow-map size and filter taps.
+* a quality/cost Pareto over shadow-map size and filter taps;
+* a binary `.nxmesh` import path and four camera/light presets for the
+  2.84M-triangle Amazon Lumberyard Bistro Exterior.
 
 Later phases add PCSS, VSM/EVSM/MSM, CSM, PSM, shadow volumes, virtual shadow
 maps, voxel shadows and AVSM. The notes in `notes/` are the reading path and the
@@ -68,12 +70,114 @@ The renderer writes a linear radiance EXR and a one-channel visibility EXR. The
 default names encode the pipeline, resolution, shadow-map size, bias and seed,
 so two runs that should match have identical names.
 
+## Bistro Exterior (large-scene scaffold)
+
+The second scene is the Amazon Lumberyard Bistro Exterior
+([CC-BY 4.0](https://developer.nvidia.com/orca/amazon-lumberyard-bistro),
+2,837,209 triangles in the G3D OBJ). It is not checked in. One command downloads
+it, verifies the zip, fixes the asset, writes the camera XMLs and exports the
+binary scenes:
+
+```bash
+source env.sh
+python3 core/02_shadows/tools/bistro_scene.py all
+```
+
+| step | output |
+|---|---|
+| `fetch` | `third_party/_deps/bistro/Exterior/exterior.obj` (297 MiB) |
+| `prepare` | `.cache/assets/bistro/exterior.obj` + `manifest.json` |
+| `scenes` | the tracked `scenes/bistro_*.xml` camera presets |
+| `export` | `.cache/scenes/bistro_*.nxscene` + one shared 100 MiB `.nxmesh` |
+
+The zip is 61 MiB (64.2 MB) and pinned by SHA-256
+`f612ba0d8a65811afe0d48a023d31e5b43ac40b78e9b12d15e2b7dc8923c29d4`. The G3D
+archive contains only `exterior.obj` and `exterior.mtl`: there are **no
+textures**, and one zero-length vertex normal makes Mitsuba reject the whole
+mesh. `prepare` replaces that normal with the previous valid one and drops the
+132 missing-texture material references. Both renderers then shade the same
+geometry with a constant clay albedo `(0.62, 0.60, 0.56)`, which is the right
+call for a shadow lab: a metric must not depend on texture filtering. The OBJ is
+in centimetres; every XML applies `<scale value="0.01"/>`, so cameras, clip
+planes and biases are in metres. The missing textures also mean that foliage
+cards are opaque: canopy shadows are solid blobs, so judge shadow edges on the
+facades and street, not on the trees.
+
+| scene | camera | sun | purpose |
+|---|---|---|---|
+| `bistro_plaza` | eye level, plaza facade | az 55°, el 35° | tree/lamp/facade shadows |
+| `bistro_street` | down the street | az 55°, el 35° | long facade, shadow direction |
+| `bistro_overview` | elevated oblique | az 55°, el 35° | shadow-map coverage |
+| `bistro_plaza_lowsun` | same plaza camera | az 55°, el 25° | longer shadows, same framing |
+
+```bash
+# hero view, 1280x720 from the XML
+./scripts/run.sh --scene .cache/scenes/bistro_plaza.nxscene --variant sm \
+    --cull none --bias 0.001
+
+# the shadow-map Pareto on the same view
+./scripts/run.sh --scene .cache/scenes/bistro_plaza.nxscene --variant pcf5 \
+    --shadow-size 4096 --cull none --bias 0.001
+
+# the same camera, exact ray-traced reference
+python3 scripts/render_ref.py --scene core/02_shadows/scenes/bistro_plaza.xml \
+    --spp 64 --seed 0 --out references/_smoke/bistro_plaza_64spp_seed0.exr
+
+# headline cost: batched frames, three runs, best p95
+./scripts/bench.sh 02_shadows --tag bistro_plaza_2048 --frames 60 --repeat 3 \
+    -- --scene .cache/scenes/bistro_plaza.nxscene --variant sm \
+       --cull none --bias 0.001 --shadow-size 2048
+```
+
+**Use `--cull none --bias 0.001` for Bistro.** The CLI default (`--cull front`)
+is calibrated on the closed blockers in `shadow_basic`; on Bistro's open leaf
+cards and awnings it stores the far side of thin geometry and leaks light.
+Keeping everything and comparing against the same Mitsuba reference raises PSNR
+at 2048² from 14.5 dB (front culling) to 18.3 dB (no culling). That is a property
+of the asset, not a bug in the default: the default is right for the small
+calibration scene, which is why the Bistro commands are explicit.
+
+The first export writes the 100 MiB sidecar; the other three camera variants
+reuse it because the sidecar is content addressed. Loading the whole scene takes
+about one second. The CPU ray caster (`tools/raycast_ref.py`) intentionally
+refuses `meshfile` scenes: it brute-forces every triangle in numpy and would take
+hours at this scale. The Mitsuba direct render is the radiance truth for Bistro.
+
+Measured on the bench machine (Apple M5, 1280x720, 2.84M triangles, `--cull none
+--bias 0.001`, 60 frames per run, three runs, best p95):
+
+| shadow map | PSNR | SSIM | MAE | p50 ms | p95 ms | shadow MiB |
+|---|---|---|---|---|---|---|
+| 2048² | 18.41 dB | 0.825 | 0.0324 | 2.68 | 3.16 | 16 |
+| 8192² | 19.24 dB | 0.873 | 0.0276 | 3.45 | 4.00 | 256 |
+
+The quality reference is 64 spp Mitsuba `direct`; the remaining error is the
+shadow-map footprint (8.4 cm/texel at 2048², 2.1 cm at 8192²) and the realtime
+G-buffer's lack of antialiasing. The 4x resolution costs 0.84 ms of p95 and
+240 MiB of shadow memory, which is exactly the kind of Pareto point the lab is
+for. These are **algorithm-level** milliseconds from a headless native renderer,
+not a game frame.
+
+The metrics use the realtime **albedo** image as the geometry ROI (eroded by
+2 px), not `compare.py`'s default silhouette. In a direct-only scene the default
+silhouette treats pure-black shadowed pixels as background, so it is not a
+geometry mask; using it would report a different, meaningless coverage.
+
 ## Scenes
 
 The Mitsuba XML is the single source of truth. `scripts/export_scene.py` loads
 it with Mitsuba and writes world-space triangles, the camera basis and the
 lights to `.cache/scenes/<name>.nxscene`. The C++ side never models geometry
 itself.
+
+Small scenes keep their triangles inline in a text `mesh` block (`nxscene 1`).
+Large meshes use `--binary`: the scene becomes `nxscene 2`, and each mesh is a
+content-addressed `.nxmesh` sidecar holding an indexed float32 vertex buffer and
+uint32 indices. The layout is documented in `src/mesh_format.h`; the renderer
+reads it straight into the Metal buffers and never builds a CPU triangle list.
+The Bistro camera XMLs in `scenes/` are the tracked files the exporter reads;
+they were generated once by `tools/bistro_scene.py` (use `--force` to rewrite
+them from its view table).
 
 Supported vocabulary: mesh shapes (`rectangle`, `cube`, `obj`), a constant
 albedo `diffuse` BSDF, a perspective camera with a box filter, directional
@@ -136,6 +240,12 @@ python3 core/02_shadows/tools/shadow_metrics.py \
 A directional light needs one shadow ray and is exact; an area light averages
 `--spp` stratified rays and is much slower. `compare.py` handles PSNR, MAE,
 SSIM and difference images; it always works in linear light.
+
+The CPU caster is `O(pixels × triangles)` and deliberately refuses `meshfile`
+scenes. At Bistro's 2.84M triangles it would take hours, so Bistro is judged
+against the Mitsuba `direct` radiance reference instead of a separate visibility
+mask. A GPU/Mitsuba-ray visibility pass is a later addition, not a prerequisite
+for the comparison above.
 
 ## Realtime benchmark
 
@@ -204,10 +314,10 @@ deliverables.
 
 ```
 core/02_shadows/
-  scenes/             Mitsuba XML, the only source of truth
-  src/                math, scene parser, Metal renderer, CLI
+  scenes/             Mitsuba XML (shadow_basic + four Bistro presets)
+  src/                math, scene parser, .nxmesh reader, Metal renderer, CLI
   shaders/            G-buffer, depth-only, visibility, shading, debug
-  tools/              ray-cast reference, shadow metrics, Pareto
+  tools/              ray-cast reference, shadow metrics, Pareto, Bistro scaffolding
   notes/              Chinese lesson notes
   README.md           this file (English, tracked)
 ```
@@ -220,11 +330,15 @@ core/02_shadows/
   coordinate/depth/winding calibration and the Mitsuba traps.
 * [02_pcf.md](notes/02_pcf.md) — PCF, what it fixes, what it does not, and the
   first quality/cost measurements.
+* [03_bistro.md](notes/03_bistro.md) — the Bistro asset, the binary import and
+  the first large-scene shadow measurements.
 
 ## What is next
 
 P2 adds a rectangular area light, PCSS and variance/moment shadow maps, and
-starts using a soft reference for the filter comparison. P4 adds cascades and
-perspective shadow maps; P5 shadow volumes; P6 virtual shadow maps, voxel
-shadows and AVSM. The Forge port is a later, separate engine-level validation
-for the winning pipelines.
+starts using a soft reference for the filter comparison. Bistro is ready for
+those experiments at 1280x720 with a 2048² or 4096² map; the four presets give
+the same geometry under two sun elevations. P4 adds cascades and perspective
+shadow maps; P5 shadow volumes; P6 virtual shadow maps, voxel shadows and AVSM.
+The Forge port is a later, separate engine-level validation for the winning
+pipelines.

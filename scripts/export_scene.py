@@ -8,9 +8,13 @@ camera and lights. The native Metal renderer must therefore never author its own
 scene: it reads an export produced by this script, so both sides see the same
 world-space triangles.
 
-The format is deliberately line oriented instead of JSON or a binary blob. A
-scene is a few thousand triangles at most, the file is easy to grep, and the C++
-reader is a few dozen lines with a precise error message per line.
+The format is deliberately line oriented instead of JSON. A calibration scene
+is a few thousand triangles at most, the file is easy to grep, and the C++
+reader is a few dozen lines with a precise error message per line. Large scenes
+would turn that into hundreds of megabytes of text, so `--binary` writes an
+indexed `.nxmesh` sidecar next to the `.nxscene` and the scene carries a
+`meshfile` line instead of inline triangles. The sidecar is content addressed,
+so four camera variants of the same Bistro share one 100 MiB mesh.
 
 Coordinate and unit conventions
 -------------------------------
@@ -36,6 +40,7 @@ Usage
     python3 scripts/export_scene.py --all
     python3 scripts/export_scene.py --scene core/02_shadows/scenes/shadow_basic.xml
     python3 scripts/export_scene.py --all --emit-aov
+    python3 scripts/export_scene.py --binary --scene core/02_shadows/scenes/bistro_plaza.xml
 
 Outputs land in `.cache/scenes/` (gitignored). The renderer prints the exact
 command to run when the export is missing.
@@ -45,8 +50,10 @@ from __future__ import annotations
 
 import argparse
 import glob
+import hashlib
 import math
 import os
+import struct
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -56,9 +63,11 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT_DIR = REPO_ROOT / ".cache" / "scenes"
 DEFAULT_VARIANT = os.environ.get("MI_DEFAULT_VARIANT", "metal_ad_rgb")
-DEFAULT_SCENE_GLOB = "core/02_shadows/scenes/*.xml"
+# `--all` is the calibration-scene convenience path. Bistro is exported by
+# core/02_shadows/tools/bistro_scene.py, which always passes --binary.
+DEFAULT_SCENE_GLOB = "core/02_shadows/scenes/shadow_*.xml"
 
-EXPORT_VERSION = 1
+EXPORT_VERSION = 1  # inline-triangle text; --binary writes version 2
 
 
 class ExportError(RuntimeError):
@@ -310,6 +319,64 @@ def mesh_triangles(shape) -> list[tuple[np.ndarray, np.ndarray]]:
     return triangles
 
 
+def shape_label(shape) -> str:
+    """A readable name for an OBJ shape: Mitsuba leaves `id()` empty for OBJ."""
+    return shape.id() or shape.class_name()
+
+
+def mesh_buffers(shape) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Bulk-access a Mitsuba mesh for the binary `.nxmesh` path.
+
+    The per-vertex Python accessors are fine for a 50-triangle calibration
+    scene and hopeless for the 2.8M-triangle Bistro. Mitsuba exposes the
+    underlying buffers, and they are already in the renderer's units: world
+    space, linear, float32 positions/normals plus uint32 triangle indices (quads
+    are triangulated by the loader).
+    """
+    if not shape.is_mesh():
+        raise ExportError(
+            f"shape '{shape_label(shape)}' is an analytic shape, not a mesh"
+        )
+    if not hasattr(shape, "vertex_positions_buffer"):
+        raise ExportError(
+            "this Mitsuba build has no bulk vertex buffers; export the scene as ASCII"
+        )
+
+    vertex_count = int(shape.vertex_count())
+    face_count = int(shape.face_count())
+    if vertex_count == 0 or face_count == 0:
+        raise ExportError(f"shape '{shape.id()}' has no triangles")
+
+    positions = np.ascontiguousarray(
+        np.asarray(shape.vertex_positions_buffer(), dtype=np.float32).reshape(-1, 3)
+    )
+    if bool(shape.has_vertex_normals()):
+        normals = np.ascontiguousarray(
+            np.asarray(shape.vertex_normals_buffer(), dtype=np.float32).reshape(-1, 3)
+        )
+    else:
+        raise ExportError(
+            f"shape '{shape.id()}' has no vertex normals; the binary path needs them. "
+            "Generate normals in the source asset."
+        )
+    indices = np.ascontiguousarray(
+        np.asarray(shape.faces_buffer(), dtype=np.uint32).reshape(-1)
+    )
+
+    if positions.shape[0] != vertex_count or normals.shape[0] != vertex_count:
+        raise ExportError(f"shape '{shape.id()}' returned an inconsistent vertex buffer")
+    if indices.size != face_count * 3 or indices.size == 0:
+        raise ExportError(
+            f"shape '{shape.id()}' returned {indices.size} indices for {face_count} faces"
+        )
+    if not np.isfinite(positions).all() or not np.isfinite(normals).all():
+        raise ExportError(f"shape '{shape.id()}' contains non-finite vertices or normals")
+    if int(indices.max()) >= vertex_count:
+        raise ExportError(f"shape '{shape.id()}' has an out-of-range index")
+
+    return positions, normals, indices
+
+
 # ---------------------------------------------------------------------------
 # Lights
 # ---------------------------------------------------------------------------
@@ -390,7 +457,8 @@ def mi_traverse_safe(obj):
         raise ExportError(f"cannot traverse {obj}: {exc}") from exc
 
 
-def collect_scene(mi, scene, source: Path) -> dict:
+def collect_scene(mi, scene, source: Path, binary: bool = False,
+                  load_geometry: bool = True) -> dict:
     sensors = scene.sensors()
     if len(sensors) != 1:
         raise ExportError(f"expected exactly one sensor, found {len(sensors)}")
@@ -405,8 +473,32 @@ def collect_scene(mi, scene, source: Path) -> dict:
             lights.append({"kind": "area", "radiance": radiance, "corners": points})
             continue
         albedo = diffuse_albedo(shape)
-        triangles = mesh_triangles(shape)
-        meshes.append({"albedo": albedo, "triangles": triangles})
+        if not binary and int(shape.face_count()) > 200_000:
+            raise ExportError(
+                f"shape '{shape_label(shape)}' has {shape.face_count()} triangles; the inline "
+                ".nxscene format is for calibration scenes. Pass --binary (see "
+                "core/02_shadows/tools/bistro_scene.py) instead of writing a "
+                "hundreds-of-megabytes text scene."
+            )
+        if binary:
+            entry = {"albedo": albedo}
+            if load_geometry:
+                positions, normals, indices = mesh_buffers(shape)
+                entry.update(
+                    positions=positions,
+                    normals=normals,
+                    indices=indices,
+                    triangle_count=indices.size // 3,
+                )
+            else:
+                entry["triangle_count"] = int(shape.face_count())
+            meshes.append(entry)
+        else:
+            triangles = mesh_triangles(shape)
+            meshes.append(
+                {"albedo": albedo, "triangles": triangles,
+                 "triangle_count": len(triangles)}
+            )
 
     for emitter in scene.emitters():
         name = emitter.class_name()
@@ -443,6 +535,7 @@ def collect_scene(mi, scene, source: Path) -> dict:
         "meshes": meshes,
         "lights": lights,
         "integrator": scene.integrator().class_name(),
+        "binary": binary,
     }
 
 
@@ -451,8 +544,78 @@ def collect_scene(mi, scene, source: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 
+MESH_MAGIC = b"NXMSH001"
+MESH_HEADER = struct.Struct("<8sIIII6f")
+assert MESH_HEADER.size == 48
+
+
+def write_mesh_file(directory: Path, mesh: dict) -> Path:
+    """Write one indexed mesh as a `.nxmesh` sidecar, content addressed.
+
+    The name is a digest of positions, normals and indices, so several camera
+    variants of the same Bistro scene share one 100+ MiB sidecar and an edited
+    asset never reuses a stale one. The file layout is documented in
+    core/02_shadows/src/mesh_format.h.
+    """
+    positions = np.ascontiguousarray(mesh["positions"], dtype=np.float32)
+    normals = np.ascontiguousarray(mesh["normals"], dtype=np.float32)
+    indices = np.ascontiguousarray(mesh["indices"], dtype=np.uint32)
+    vertex_count = int(positions.shape[0])
+    index_count = int(indices.size)
+    if positions.shape != (vertex_count, 3) or normals.shape != (vertex_count, 3):
+        raise ExportError("mesh buffers are not (vertex_count, 3)")
+    if index_count % 3 != 0 or index_count == 0:
+        raise ExportError("mesh index count is not a multiple of three")
+    if vertex_count >= 2**32 or index_count >= 2**32:
+        raise ExportError("mesh is too large for 32-bit indices")
+
+    digest = hashlib.sha1()
+    digest.update(positions.tobytes())
+    digest.update(normals.tobytes())
+    digest.update(indices.tobytes())
+    target = directory / f"mesh_{digest.hexdigest()[:16]}.nxmesh"
+    expected_size = MESH_HEADER.size + vertex_count * 6 * 4 + index_count * 4
+
+    if target.exists() and target.stat().st_size == expected_size:
+        return target
+
+    directory.mkdir(parents=True, exist_ok=True)
+    vertices = np.empty((vertex_count, 6), dtype=np.float32)
+    vertices[:, 0:3] = positions
+    vertices[:, 3:6] = normals
+    bounds_min = positions.min(axis=0)
+    bounds_max = positions.max(axis=0)
+
+    header = MESH_HEADER.pack(
+        MESH_MAGIC,
+        1,
+        vertex_count,
+        index_count,
+        0,
+        float(bounds_min[0]),
+        float(bounds_min[1]),
+        float(bounds_min[2]),
+        float(bounds_max[0]),
+        float(bounds_max[1]),
+        float(bounds_max[2]),
+    )
+    with open(target, "wb") as file:
+        file.write(header)
+        vertices.tofile(file)
+        indices.tofile(file)
+
+    print(
+        f"         -> {target} "
+        f"({vertex_count} vertices, {index_count // 3} triangles, "
+        f"{expected_size / (1024 * 1024):.1f} MiB)"
+    )
+    return target
+
+
 def write_nxscene(scene: dict, source: Path, target: Path, variant: str) -> None:
     camera = scene["camera"]
+    binary = bool(scene.get("binary"))
+    version = 2 if binary else EXPORT_VERSION
     lines: list[str] = []
     lines.append("# nyx .nxscene, exported from Mitsuba")
     lines.append(f"# source: {source.resolve()}")
@@ -461,7 +624,7 @@ def write_nxscene(scene: dict, source: Path, target: Path, variant: str) -> None
     except OSError:
         pass
     lines.append(f"# mitsuba: {variant}")
-    lines.append(f"nxscene {EXPORT_VERSION}")
+    lines.append(f"nxscene {version}")
     lines.append(f"film {camera['width']} {camera['height']}")
     lines.append(
         "camera "
@@ -500,6 +663,17 @@ def write_nxscene(scene: dict, source: Path, target: Path, variant: str) -> None
             )
 
     for mesh in scene["meshes"]:
+        if binary:
+            mesh_path = write_mesh_file(target.parent, mesh)
+            lines.append(
+                "meshfile "
+                + vec_line(mesh["albedo"])
+                + " "
+                + str(mesh["triangle_count"])
+                + " "
+                + mesh_path.name
+            )
+            continue
         triangles = mesh["triangles"]
         lines.append(
             "mesh " + vec_line(mesh["albedo"]) + " " + str(len(triangles))
@@ -556,6 +730,9 @@ def parse_args() -> argparse.Namespace:
                         help=f"output directory (default {DEFAULT_OUT_DIR})")
     parser.add_argument("--emit-aov", action="store_true",
                         help="also write <scene>_albedo.xml with an albedo AOV integrator")
+    parser.add_argument("--binary", action="store_true",
+                        help="write indexed .nxmesh sidecars instead of inline triangles "
+                             "(required for Bistro-scale meshes)")
     parser.add_argument("--variant", default=DEFAULT_VARIANT,
                         help=f"Mitsuba variant (default {DEFAULT_VARIANT})")
     parser.add_argument("--check", action="store_true",
@@ -601,8 +778,9 @@ def main() -> int:
             if not source.exists():
                 raise ExportError(f"no scene at {source}")
             scene = mi.load_file(str(source))
-            data = collect_scene(mi, scene, source)
-            triangles = sum(len(mesh["triangles"]) for mesh in data["meshes"])
+            data = collect_scene(mi, scene, source, binary=args.binary,
+                                 load_geometry=not args.check)
+            triangles = sum(mesh["triangle_count"] for mesh in data["meshes"])
             summary = (
                 f"{len(data['meshes'])} mesh(es), {triangles} triangles, "
                 f"{len(data['lights'])} light(s), integrator={data['integrator']}, "

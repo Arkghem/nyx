@@ -8,6 +8,7 @@
 
 #import <Foundation/Foundation.h>
 
+#include "mesh_format.h"
 #include "nx/profile/gpu_timer.h"
 
 #include <algorithm>
@@ -224,13 +225,73 @@ bool Renderer::create_textures(std::string* error) {
 }
 
 bool Renderer::create_meshes(const Scene& scene, std::string* error) {
+    static_assert(sizeof(Vertex) == 6 * sizeof(float),
+                  "a .nxmesh vertex must be six floats");
+
     meshes_.reserve(scene.meshes.size());
     stats_.triangles = 0.0;
     stats_.draw_calls = 0.0;
 
+    auto upload = [&](const void* vertex_data, std::size_t vertex_count,
+                      const std::uint32_t* index_data, std::size_t index_count,
+                      Vec3 albedo) -> bool {
+        if (vertex_count == 0 || index_count == 0 || (index_count % 3) != 0) {
+            *error = "mesh has an empty or non-triangle index buffer";
+            return false;
+        }
+        GpuMesh gpu_mesh;
+        gpu_mesh.vertices =
+            [device_ newBufferWithBytes:vertex_data
+                                 length:vertex_count * sizeof(Vertex)
+                                options:MTLResourceStorageModeShared];
+        gpu_mesh.indices =
+            [device_ newBufferWithBytes:index_data
+                                 length:index_count * sizeof(std::uint32_t)
+                                options:MTLResourceStorageModeShared];
+        if (gpu_mesh.vertices == nil || gpu_mesh.indices == nil) {
+            *error = "cannot upload mesh buffers";
+            return false;
+        }
+        gpu_mesh.index_count = index_count;
+        gpu_mesh.albedo = Vec4(albedo, 1.0f);
+        meshes_.push_back(gpu_mesh);
+
+        stats_.triangles += static_cast<double>(index_count / 3);
+        stats_.draw_calls += 1.0;
+        return true;
+    };
+
     for (const Mesh& mesh : scene.meshes) {
+        if (mesh.is_binary()) {
+            // Large meshes are never materialized as CPU triangles; the
+            // sidecar is read straight into the two Metal buffers.
+            MeshFileHeader header{};
+            std::string mesh_error;
+            if (!read_mesh_header(mesh.mesh_path, &header, &mesh_error)) {
+                *error = mesh_error;
+                return false;
+            }
+            if (header.vertex_count != mesh.vertex_count ||
+                header.index_count != mesh.index_count) {
+                *error = mesh.mesh_path + ": header does not match the .nxscene";
+                return false;
+            }
+            std::vector<float> vertices;
+            std::vector<std::uint32_t> indices;
+            if (!read_mesh_payload(mesh.mesh_path, header, &vertices, &indices,
+                                   &mesh_error)) {
+                *error = mesh_error;
+                return false;
+            }
+            if (!upload(vertices.data(), header.vertex_count, indices.data(),
+                        header.index_count, mesh.albedo)) {
+                return false;
+            }
+            continue;
+        }
+
         std::vector<Vertex> vertices;
-        std::vector<uint32_t> indices;
+        std::vector<std::uint32_t> indices;
         vertices.reserve(mesh.triangles.size() * 3);
         indices.reserve(mesh.triangles.size() * 3);
 
@@ -244,33 +305,14 @@ bool Renderer::create_meshes(const Scene& scene, std::string* error) {
                 gpu_vertex.normal[1] = triangle.normal[vertex].y;
                 gpu_vertex.normal[2] = triangle.normal[vertex].z;
                 vertices.push_back(gpu_vertex);
-                indices.push_back(static_cast<uint32_t>(indices.size()));
+                indices.push_back(static_cast<std::uint32_t>(indices.size()));
             }
         }
 
-        if (vertices.empty()) {
-            continue;
-        }
-
-        GpuMesh gpu_mesh;
-        gpu_mesh.vertices =
-            [device_ newBufferWithBytes:vertices.data()
-                                 length:vertices.size() * sizeof(Vertex)
-                                options:MTLResourceStorageModeShared];
-        gpu_mesh.indices =
-            [device_ newBufferWithBytes:indices.data()
-                                 length:indices.size() * sizeof(uint32_t)
-                                options:MTLResourceStorageModeShared];
-        if (gpu_mesh.vertices == nil || gpu_mesh.indices == nil) {
-            *error = "cannot upload mesh buffers";
+        if (!upload(vertices.data(), vertices.size(), indices.data(), indices.size(),
+                    mesh.albedo)) {
             return false;
         }
-        gpu_mesh.index_count = indices.size();
-        gpu_mesh.albedo = Vec4(mesh.albedo, 1.0f);
-        meshes_.push_back(gpu_mesh);
-
-        stats_.triangles += static_cast<double>(mesh.triangles.size());
-        stats_.draw_calls += 1.0;
     }
 
     if (meshes_.empty()) {

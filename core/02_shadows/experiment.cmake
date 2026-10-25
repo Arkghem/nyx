@@ -16,6 +16,7 @@ nx_experiment(
     DEPS    metal
     SOURCES src/main.mm
             src/scene.cpp
+            src/mesh_format.cpp
             src/renderer.mm
     SHADERS shaders/gbuffer.metal
             shaders/depth_only.metal

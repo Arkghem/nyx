@@ -95,8 +95,17 @@ def parse_nxscene(path: Path) -> dict:
         token = parts[0]
         if token == "nxscene":
             if len(parts) != 2 or parts[1] != "1":
-                raise SceneError("unsupported .nxscene version")
+                raise SceneError(
+                    "this CPU ray caster only supports inline-triangle nxscene 1 "
+                    "files. Bistro exports nxscene 2 with a .nxmesh sidecar; use the "
+                    "Mitsuba radiance reference (scripts/render_ref.py) instead."
+                )
             saw_header = True
+        elif token == "meshfile":
+            raise SceneError(
+                "meshfile scenes are outside this tool's budget: it brute-forces "
+                "every triangle in numpy. Use scripts/render_ref.py for Bistro."
+            )
         elif token == "film":
             film = (int(parts[1]), int(parts[2]))
         elif token == "camera":
